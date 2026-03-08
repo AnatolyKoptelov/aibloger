@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 # Добавляем корневую директорию в путь
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
+
 # Загружаем переменные окружения из .env файла в папке config
 try:
     from dotenv import load_dotenv
@@ -21,21 +24,13 @@ import base64
 import time
 import requests
 import re
+import os
 from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
 # Импортируем логгер
 from logs.logger import get_logger
-
-# Загружаем переменные окружения из .env файла
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # python-dotenv не установлен, надеемся на переменные окружения
-
-import os
 
 # ==================== Типы данных ====================
 
@@ -242,6 +237,12 @@ class RouterAIClient:
             self.logger.error(f"Ошибка загрузки конфига: {e}")
             raise
 
+        # СНАЧАЛА проверяем, есть ли модель
+        if model_name not in configs:
+            available = ', '.join(configs.keys())
+            raise ValueError(f"Модель '{model_name}' не найдена. Доступны: {available}")
+
+        # ПОТОМ работаем с ключами
         if 'api_key_env' in configs[model_name]:
             env_var = configs[model_name]['api_key_env']
             api_key = os.getenv(env_var)
@@ -252,10 +253,6 @@ class RouterAIClient:
             # Для обратной совместимости
             if 'api_key' not in configs[model_name]:
                 raise ValueError(f"В конфиге модели {model_name} нет ни api_key, ни api_key_env")
-        
-        if model_name not in configs:
-            available = ', '.join(configs.keys())
-            raise ValueError(f"Модель '{model_name}' не найдена. Доступны: {available}")
         
         self.config = ModelConfig.from_dict(model_name, configs[model_name])
         self.files = FileHandler(self.logger)
@@ -328,11 +325,17 @@ class RouterAIClient:
                 self.logger.debug(f"Добавляю файл: {path.name}")
                 b64 = self.files.to_base64(path)
                 mime = self.files.get_mime(path)
+
+
                 
                 # Для JSON файлов показываем содержимое
                 if path.suffix.lower() == '.json':
+
+                    mime = 'text/plain'
+                    self.logger.debug(f"JSON файл, принудительно устанавливаю MIME: {mime}")
+                    # Покажем первые 100 символов содержимого
                     with open(path, 'r', encoding='utf-8') as f:
-                        self.logger.debug(f"JSON содержимое (первые 100): {f.read()[:100]}")
+                        self.logger.debug(f"Содержимое JSON (первые 100): {f.read()[:100]}")
                 
                 if mime.startswith('image/'):
                     content.append({
