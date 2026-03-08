@@ -1,0 +1,81 @@
+{
+    "models": {
+        "deepseek": {
+            "model": "deepseek/deepseek-v3.2",
+	    "api_key_env": "DEEPSEEK_API_KEY",
+            "input": ["text"],
+            "output": ["text"],
+            "temperature": 0.8,
+            "max_tokens": 8000,
+            "timeout": 240
+        },
+        "seed": {
+            "model": "bytedance-seed/seed-2.0-mini",
+	    "api_key_env": "SEED_API_KEY",
+            "input": ["text", "image", "video"],
+            "output": ["text"],
+            "temperature": 0.5,
+            "max_tokens": 4000,
+            "timeout": 240,
+            "extra_body": {
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {
+                    "thinking_budget": 0
+                }
+            }
+        },
+        "seedream": {
+            "model": "bytedance-seed/seedream-4.5",
+	    "api_key_env": "SEEDREAM_API_KEY",
+            "input": ["text"],
+            "output": ["image"],
+            "temperature": 0.8,
+            "max_tokens": 4000,
+            "timeout": 240,
+            "size": "1024x1024"
+        },
+        "yandex": {
+            "model": "yandex/gpt-lite-5",
+	    "api_key_env": "YANDEX_API_KEY",
+            "input": ["text"],
+            "output": ["text"],
+            "temperature": 0.8,
+            "max_tokens": 4000,
+            "timeout": 240
+        },
+        "flux-klein": {
+            "model": "black-forest-labs/flux.2-klein-4b",
+	    "api_key_env": "FLUX_KLEIN_API_KEY",
+            "input": ["text"],
+            "output": ["image"],
+            "timeout": 240,
+            "size": "1024x1024"
+        },
+        "flux-pro": {
+            "model": "black-forest-labs/flux.2-pro",
+	    "api_key_env": "FLUX_PRO_API_KEY",
+            "input": ["text"],
+            "output": ["image"],
+            "timeout": 240,
+            "size": "1024x1024"
+        },
+        "gemma3": {
+            "model": "google/gemma-3-27b-it",
+	    "api_key_env": "GEMMA3_API_KEY",
+            "input": ["text", "image"],
+            "output": ["text"],
+            "temperature": 0.5,
+            "max_tokens": 8000,
+            "timeout": 240
+        },
+        "gemini-flash-lite": {
+            "model": "google/gemini-2.5-flash-lite",
+	    "api_key_env": "GEMINI_FLASH_LITE_API_KEY",
+            "input": ["text", "file", "image", "audio", "video"],
+            "output": ["text"],
+            "temperature": 0.5,
+            "max_tokens": 8000,
+            "timeout": 240
+        }
+    }
+}
