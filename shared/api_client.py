@@ -32,6 +32,11 @@ from enum import Enum
 # Импортируем логгер
 from logs.logger import get_logger
 
+# ==================== Константы ====================
+
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB в байтах
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB для изображений
+
 # ==================== Типы данных ====================
 
 class InputType(str, Enum):
@@ -81,11 +86,15 @@ class ModelConfig:
 class FileHandler:
     """Работа с файлами"""
     
-    def __init__(self, logger, temp_dir: str = "temp"):
+    def __init__(self, logger, temp_dir: str = "temp", 
+                 max_file_size: int = MAX_FILE_SIZE,
+                 max_image_size: int = MAX_IMAGE_SIZE):
         self.logger = logger
         self.temp_dir = Path(temp_dir)
         self.images_dir = self.temp_dir / "images"
         self.images_dir.mkdir(parents=True, exist_ok=True)
+        self.max_file_size = max_file_size
+        self.max_image_size = max_image_size
         
         self.mime_map = {
             '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -106,6 +115,27 @@ class FileHandler:
         with open(path, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
     
+    def validate_file_size(self, path: Path) -> bool:
+        """Проверяет размер файла"""
+        try:
+            size = path.stat().st_size
+            mime = self.get_mime(path)
+            
+            if mime.startswith('image/'):
+                if size > self.max_image_size:
+                    self.logger.error(f"Изображение {path.name} слишком большое: {size/1024/1024:.1f} MB > {self.max_image_size/1024/1024} MB")
+                    return False
+            else:
+                if size > self.max_file_size:
+                    self.logger.error(f"Файл {path.name} слишком большой: {size/1024/1024:.1f} MB > {self.max_file_size/1024/1024} MB")
+                    return False
+            
+            self.logger.debug(f"Размер файла {path.name}: {size/1024:.1f} KB")
+            return True
+        except Exception as e:
+            self.logger.error(f"Ошибка проверки размера файла {path.name}: {e}")
+            return False
+    
     def save_image(self, data: str, model: str, idx: int = 0) -> Optional[Path]:
         timestamp = int(time.time())
         filename = f"{model}_{timestamp}_{idx}.png"
@@ -115,6 +145,13 @@ class FileHandler:
             if data.startswith(('http://', 'https://')):
                 r = requests.get(data, timeout=60, stream=True)
                 r.raise_for_status()
+                
+                # Проверяем размер перед сохранением
+                content_length = r.headers.get('content-length')
+                if content_length and int(content_length) > self.max_image_size:
+                    self.logger.error(f"Изображение по URL слишком большое: {int(content_length)/1024/1024:.1f} MB")
+                    return None
+                
                 with open(filepath, 'wb') as f:
                     for chunk in r.iter_content(8192):
                         f.write(chunk)
@@ -123,6 +160,13 @@ class FileHandler:
                 if ',' in data:
                     data = data.split(',', 1)[1]
                 data = re.sub(r'\s+', '', data)
+                
+                # Проверяем размер base64
+                approx_size = len(data) * 3 / 4  # приблизительный размер в байтах
+                if approx_size > self.max_image_size:
+                    self.logger.error(f"Изображение в base64 слишком большое: {approx_size/1024/1024:.1f} MB")
+                    return None
+                
                 content = base64.b64decode(data)
                 with open(filepath, 'wb') as f:
                     f.write(content)
@@ -172,6 +216,25 @@ class HTTPClient:
                             error_msg = str(result['error'])
                     elif 'message' in result:
                         error_msg = result['message']
+                
+                # Rate limiting (429)
+                if r.status_code == 429:
+                    retry_after = int(r.headers.get('Retry-After', 60))
+                    self.logger.warning(f"Rate limit exceeded. Retry after {retry_after}s")
+                    
+                    if attempt < self.max_retries - 1:
+                        # Ждем столько, сколько сказал сервер, или по формуле
+                        wait = max(retry_after, 1 * (2 ** attempt))
+                        self.logger.warning(f"Ожидание {wait}с перед повтором...")
+                        time.sleep(wait)
+                        continue
+                    else:
+                        return {
+                            'error': 'rate_limit',
+                            'message': f'Rate limit exceeded. Try again in {retry_after}s',
+                            'retry_after': retry_after,
+                            'status_code': 429
+                        }
                 
                 # Если это серверная ошибка (5xx) и есть попытки, повторяем
                 if r.status_code >= 500 and attempt < self.max_retries - 1:
@@ -264,7 +327,27 @@ class RouterAIClient:
         self.logger.divider()
     
     def _validate_inputs(self, images=None, files=None, audio=None, video=None):
-        """Проверяет поддержку типов данных"""
+        """Проверяет поддержку типов данных и размер файлов"""
+        # Собираем все файлы для проверки размера
+        all_files = []
+        if images:
+            all_files.extend(images)
+        if files:
+            all_files.extend(files)
+        if audio:
+            all_files.extend(audio)
+        if video:
+            all_files.extend(video)
+        
+        # Проверяем размер каждого файла
+        for file_path in all_files:
+            path = Path(file_path)
+            if not path.exists():
+                raise ValueError(f"Файл {file_path} не найден")
+            if not self.files.validate_file_size(path):
+                raise ValueError(f"Файл {file_path} превышает допустимый размер")
+        
+        # Проверяем поддержку типов
         if images:
             for img in images:
                 if InputType.IMAGE not in self.config.input_types:
@@ -325,15 +408,11 @@ class RouterAIClient:
                 self.logger.debug(f"Добавляю файл: {path.name}")
                 b64 = self.files.to_base64(path)
                 mime = self.files.get_mime(path)
-
-
                 
-                # Для JSON файлов показываем содержимое
+                # Для JSON файлов показываем содержимое и меняем MIME
                 if path.suffix.lower() == '.json':
-
                     mime = 'text/plain'
                     self.logger.debug(f"JSON файл, принудительно устанавливаю MIME: {mime}")
-                    # Покажем первые 100 символов содержимого
                     with open(path, 'r', encoding='utf-8') as f:
                         self.logger.debug(f"Содержимое JSON (первые 100): {f.read()[:100]}")
                 
